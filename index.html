@@ -1,0 +1,467 @@
+<html>
+<head>
+
+<script src="utilModule.js" charset="utf-8"></script>
+<script src="utilDebug.js" charset="utf-8"></script>
+<script src="utilities.js" charset="utf-8"></script>
+<script src="ajax.js" charset="utf-8"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.56.0/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.56.0/mode/javascript/javascript.min.js"></script>
+<script>
+
+function isNumeric(value) {
+    return /^-{0,1}\d+$/.test(value);
+}
+
+let Script = {};
+
+Script.Language = new function() {
+	this.cmdHash = {
+		tick: {},
+		talk: {},
+		onEscape: {},
+		journal: {},
+		pl: {},
+		me: {},
+		say: {},
+		if: {},
+		choice: {},
+		ask: {},
+		pick: {},
+		wait: {},
+		goto: {},
+		exit: {},
+		deadend: {},
+		run: {},
+	};
+}();
+
+
+Script.Parser = class {
+	constructor() {
+		this.sectionReg = /(\t*)(generator|cast|flag|code)(\s*)/;
+		this.castReg = /(\t*)(\w+)\s*(?::)\s*(.+)(\/\/.*)*/;
+		this.flagReg = this.castReg;
+		this.symbolReg = /(?:".*?")|(?:'.*?')|([a-zA-Z]\w+)((\.[a-zA-Z]\w+)*)/g;
+		this.codeReg = /(\t*)([a-zA-Z]\w+)(\s*|$)(.*)/;
+		this.declareReg = /(\t*)([a-zA-Z]\w+)(.*)/;
+		this.reset();
+	}
+	reset() {
+		this.output = {
+			id: null,
+			generator: [],
+			cast: {},
+			flag: {},
+			code: {},
+			line: [],
+			depth: []
+		}
+		this.declarationDepth = null;
+		this.symCheck = [];
+		this.depth = null;
+		this.lineList = null;
+		this.lineNum = 0;
+		this.error = null;
+		this.issueList = [];
+	}
+	assert(value,text) {
+		if( !value ) {
+			let err = text+' in line '+this.lineNum+'\n'+this.lineList[this.lineNum];
+			this.report(err);
+			this.issueList.push(err);
+			return false;
+		}
+		return true;
+	}
+	test(value,text) {
+		if( !value ) {
+			console.assert(text);
+			this.error = this.error || text;
+			return false;
+		}
+		return true;
+	}
+	report(...args) {
+		console.log(...args);
+	}
+	getType(value) {
+		if( Array.isArray(value) ) return 'tArray';
+		if( Object.isObject(value) ) return 'tObject';
+		if( value === null ) return 'tNull';
+		return 't'+String.capitalize(typeof value);
+	}
+	prefixSymbols(line,fatArrow=true) {
+		let doNotPrefix = { "null": 1 };
+		let anySymbols = false;
+		let result = line.replace( this.symbolReg, (data,symbol,afterDot) =>{
+			if( symbol === undefined ) {
+				return data;	// It is a string.
+			}
+			this.symCheck.push({
+				lineNum: this.lineNum,
+				symbol: symbol,
+				afterDot: afterDot
+			});
+			anySymbols = true;
+			return doNotPrefix[symbol] ? symbol+afterDot : 'c.'+symbol+''+afterDot;
+		});
+		result = (fatArrow && anySymbols ? 'c=>'+result : result);
+		return result;
+	}
+	parseGenerator(line) {
+		line = line.trim();
+		if( line==='' ) return;
+		this.output.generator.push( this.prefixSymbols(line) );
+	}
+	parseKeyValue(line,regex) {
+		let [data,depth,key,value,comment] = regex.exec(line) || [];
+		this.assert( data === line, 'Unparsed line' );
+
+		value = this.prefixSymbols(value);
+
+		if( isNumeric(value.trim()) ) {
+			value = parseInt(value);
+		}
+		else
+		if( value === 'null' ) {
+			value = null;
+		}
+		this.assert( typeof key === 'string', 'Invalid key' );
+
+		return [depth,key,value];
+	}
+	parseCast(line) {
+		let [depth,castKey,castValue] = this.parseKeyValue(line,this.castReg);
+		this.output.cast[castKey] = castValue;
+		this.report( 'cast '+castKey+' = '+castValue );
+	}
+	parseFlag(line) {
+		let [depth,flagKey,flagValue] = this.parseKeyValue(line,this.flagReg);
+		this.output.flag[flagKey] = flagValue;
+		this.report( 'flag '+flagKey+' = '+flagValue );
+	}
+	parseCode(line) {
+		let isDeclaration = () => {
+			let [data,depth,functionId,more] = this.declareReg.exec(line) || [];
+			if( more.trim()==='' && depth.length === this.depth+1 ) {
+				this.assert( depth.length == this.depth+1, 'Declaring code at wrong depth' );
+				this.declarationDepth = depth.length;
+				this.output.code[functionId] = this.lineNum;
+				return true;
+			}
+		}
+		if( isDeclaration() ) {
+			return;
+		}
+
+		let [data,depth,cmd,white,rest] = this.codeReg.exec(line) || [];
+		this.assert( depth.length > this.declarationDepth, 'Illegal depth' );
+		let relDepth = depth.length - this.declarationDepth - 1;
+		let result;
+		if( white || !rest ) {	// this is a command
+			rest = this.prefixSymbols(rest,false);
+			result = "	".repeat(relDepth)+'c=>c.'+cmd+'('+(rest?' '+rest+' ':'')+')';
+		}
+		else {
+			let exp = this.prefixSymbols(cmd+rest);
+			result = "	".repeat(relDepth)+'c=>c.'+exp;
+		}
+
+		this.output.depth[this.lineNum] = relDepth;
+		this.output.line[this.lineNum]  = result;
+		this.report( relDepth+', '+result );
+	}
+	parse(s) {
+		let sectionFn = {
+			Script: this.parseScript,
+			generator: this.parseGenerator.bind(this),
+			cast: this.parseCast.bind(this),
+			flag: this.parseFlag.bind(this),
+			code: this.parseCode.bind(this)
+		};
+
+		this.reset();
+		this.lineList = s.split('\n');
+		let modeFn = ()=>{};
+		this.lineNum = -1;
+		while( ++this.lineNum < this.lineList.length ) {
+			let line = this.lineList[this.lineNum];
+			if( line.trim()==='' ) continue;
+			let [data,depth,secName,more] = this.sectionReg.exec(line) || [];
+			if( more!==undefined && more.trim()==='' && secName ) {
+				modeFn = sectionFn[secName];
+				this.depth = depth.length;
+				continue;
+			}
+			modeFn(line);
+		}
+
+		console.log('SCRIPT RESULT');
+		console.log(JSON.stringify(this.output,null,"\t"));
+		return this.output;
+	}
+}
+
+
+let entityList = [];
+
+class Entity {
+	constructor(id) {
+		this.id = id;
+		entityList.push(this);
+	}
+	remove() {
+		this.dead = true;
+	}
+	tick() {
+	}
+}
+
+Entity.find = entityId=>{
+	return entityList.find(entity=>entity.id==entityId);
+}
+
+class Timer extends Entity {
+	constructor(duration,fn) {
+		super(Math.random());
+		this.duration = duration;
+		this.fn = fn;
+	}
+	tick(dt) {
+		if( this.duration <= 0 ) {
+			this.fn();
+			this.remove();
+		}
+		this.duration -= 1;
+	}
+}
+
+class Person extends Entity {
+	constructor(id) {
+		super(id);
+		this.siteId = '';
+	}
+	isAt(siteId) {
+		return this.siteId;
+	}
+	travelTo(siteId) {
+		new Timer(3,c=>this.siteId=siteId);
+	}
+}
+
+class Dialog {
+	constructor() {
+		this.meSpoke = false;
+		this.replyList = [];
+		this.awaitReply = false;
+	}
+	me(s) {
+		console.log('ME:',s);
+		this.meSpoke = true;
+	}
+	addReply(s) {
+		console.log('PL?',s);
+		this.replyList.push('PL: '+s);
+	}
+	pl(s) {
+		// Pause this particular script, but allow other 
+	}
+	ask() {
+		this.awaitReply = true;
+	}
+	choose(n) {
+		console.log('PL:',this.replyList[n]);
+		this.replyList = [];
+		this.meSpoke = false;
+		this.awaitReply = false;
+	}
+}
+
+let proxyMake = function(fakeObject) {
+	return new Proxy( fakeObject, {
+		get: function(target,property) {
+			let context = target.$context;
+			let script  = context.script;
+			let p = script.flag[property] || script.cast[property] || context[property];
+			if( typeof p === 'string' && p.startsWith('c=>') ) {
+				let fn = Function('return ('+p+');');
+				return fn();
+			}
+			return p;
+		},
+		set: function(target,property,value) {
+			let context = target.$context;
+			let script  = context.script;
+			if( script.flag[property] ) {
+				return script.flag[property]=value;
+			}
+			if( script.cast[property] ) {
+				return script.cast[property]=value;
+			}
+		}
+	});
+}
+
+
+Script.Context = class {
+	constructor(script,observer) {
+		this.script = script;
+		this.observer = observer;
+		this.state = 'BEGIN';
+		this.flow  = null;
+		this.fakeObject = { $context: this };
+		this.c = proxyMake(this.fakeObject);
+		debugger;
+		console.log(this.c.roomCost);
+		this.c.test(this.c);
+		console.log(this.script.flag);
+		debugger;
+	}
+	get dialog() {
+		return this.observer.dialog;
+	}
+/*
+	$(property) {
+		debugger;
+		if( this.script.flag[property] ) {
+			return this.script.flag[property];
+		}
+		if( this.script.cast[property] ) {
+			return this.script.cast[property];
+		}
+		return null;
+	}
+*/	me(s) {
+		if( this.dialog.meSpoke ) {
+			this.flow = '$awaitTalk';
+			return;
+		}
+		console.log(s);
+	}
+	choice(s) {
+		return;
+	}
+}
+
+
+Script.VM = class {
+	constructor() {
+		this.context = null;
+	}
+	get script() {
+		return this.context.script;
+	}
+	start( context ) {
+		this.context = context;
+		this.ip = 0;
+		this.depth = 0;
+		this.stack = [];
+	}
+	codeEntry(codeEntryId) {
+		this.ip = this.script.code[codeEntryId];
+		this.depth = 0;
+	}
+	executeOne() {
+		let depth  = this.script.depth[this.ip];
+		let line   = this.script.line[this.ip];
+		if( depth > this.depth ) return '$skip';
+		debugger;
+		let result = line(this.context.c);
+		console.log(depth,':',result);
+		if( result ) {
+			depth += 1;
+		}
+		return $result;
+	}
+
+	execute() {
+		let run = true;
+		while( run ) {
+			debugger;
+			let result = this.executeOne();
+			if( result == '$await' ) {
+				return;
+			}
+			this.ip += 1;
+			if( result == '$skip' ) {
+				continue;
+			}
+			if( result == '$exit' ) {
+				break;
+			}
+			if( this.ip > this.a.length ) {
+				break;
+			}
+		}
+	}
+
+	tick() {
+		this.execute();
+	}
+}
+
+Script.Data = {};
+
+
+class SymbolValidator {
+	constructor() {
+	}
+	validate(symbol) {
+		// find a matching entity if
+	}
+}
+
+
+
+let Dev = {};
+Dev.View = class {
+	constructor(elementId) {
+		let cm = CodeMirror.fromTextArea(document.getElementById(elementId), {
+			value: 'hello this is a test',
+			mode: 'javascript'
+		});
+	}
+
+}
+
+let View = {};
+
+async function main() {
+	Module.realize();
+
+	View.dev = new Dev.View('codeEditor');
+
+	console.log('START');
+	let testScriptString = await Ajax.get('tavernKeeper.scry');
+	let parser = new Script.Parser();
+	let testScript = parser.parse(testScriptString);
+	let context = new Script.Context(testScript);
+
+
+	new Person('delphine');
+	new Person('player');
+
+	let observer = Entity.find('player');
+	context.observer = observer;
+
+	let vm = new Script.VM();
+	vm.start(context);
+	vm.codeEntry( 'BEGIN' );
+
+	setInterval( ()=>{
+		vm.tick();
+	},250);
+}
+
+</script>
+</head>
+<body>
+	<textarea id="codeEditor" style="height:400px; width:100%;"></textarea>
+	<script>
+	document.addEventListener("DOMContentLoaded", () => {
+		main();
+	})
+</script>
+</body>
+</html>

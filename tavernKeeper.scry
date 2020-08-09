@@ -5,7 +5,8 @@ cast
 	bedroom:	'bedroomSleepingGiantInn'
 flag
 	roomCost:	10
-	roomRented:	time.createTimer
+	roomRented:	new Timer
+	test: roomCost += 1
 code
 	BEGIN
 		talk giver
