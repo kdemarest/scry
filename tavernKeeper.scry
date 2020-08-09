@@ -1,0 +1,39 @@
+generator
+	'delphine'
+cast
+	giver:		null
+	bedroom:	'bedroomSleepingGiantInn'
+flag
+	roomCost:	10
+	roomRented:	time.createTimer
+code
+	BEGIN
+		talk giver
+			if giver.noTavern
+				exit
+			me "Welcome to the Sleeping Giant Inn."
+			pl "Any rumors lately?"
+				me "Nothing to speak of."
+				deadend
+			pl "I'd like to rent a room. ("+roomCost+" gold)"
+			if player.gold >= roomCost
+				player.gold -= roomCost
+				me "OK. Follow me."
+				exit lead
+			else
+				me "Come back when you have more coin."
+	lead
+		talk giver
+			me "Follow me to your room."
+		tick giver
+			giver.travelTo( bedroom )
+			wait giver.isAt(bedroom) && player.isAt(bedroom)
+			me "Here you are. Have a good night's sleep."
+			exit rented
+	rented
+		talk giver
+			me "I hope you are enjoying your room."
+		tick giver
+			roomRented.start(50)
+			wait roomRented
+			goto BEGIN

@@ -1,0 +1,89 @@
+generator			
+	'brynjolf'
+cast
+	brynjolf:	'brynjolf'
+	bStall:		'brynjolfStall'
+	madesi:		'madesi'
+	mStall:		'madesiStall'
+	brandShei:	'brandShei'
+	ring:		'madesiRing'
+flag
+	seekingEsbern:	findEsbern.inProgress
+	framedMadesi:	aChanceArrangement.complete
+	persuade1:		flagCache( player.persuade(50) )
+	haveGold:		player.gold >= 500
+	killedGuard:	riftenGate.killedGuard
+	isScamTime:		time.hour >= 8 && time.hour <= 12+8
+	stoleRing:		player.has(ring)
+	plantedRing:	brandShei.has(ring)
+	atStallDaytime:	isScamTime && brynjolf.isAt(bStall) && player.isAt(bStall)
+code
+	explain
+		if state=='getStarted'
+			choice "I'm ready. Let's get this started."
+				me "Good. Wait until I start the distraction, etc..."
+				exit 'stealRing'
+		choice "Why are we doing this to Brand-Shei?"
+			me "We've been contracted..."
+			deadend
+		choice "How am I supposed to do all of this?"
+			me "Do you want me to hold you hand? ... blah blah"
+			deadend
+		ask
+	speechify
+		me "Gather round everyone."
+		me "tc etc. some of you will doubt..."
+		say 'madesi', 'Is this another scam like last time?'
+	BEGIN
+		tick brynjolf
+			wait atStallDaytime
+			brynjolf.talkTo(player)
+		talk brynjolf
+			onEscape
+				me "I can take a hint. You want to make some coin, come find me."
+				exit getInstructions
+			if haveGold
+				me "Never done an honest day's work in your life for all that coin you carry..."
+			else
+				me "Running a little light in the pockets, lad?"
+			miscellaneous.start( listenBrynjolf, brynjolf )
+			pl "I'm sorry, what?"
+				me "I'm saying you've got the coin, but you didn't earn a Septim of it honestly. I can tell."
+				deadend
+			choice "How could you possibly know that?"
+				me "Look how you sniffed out my little scheme at the North Gate. You knew it was a shakedown and you called him on it. That's what I'm talking about."
+				pl "So the guard at the North Gate was your man?"
+				me "Aye, that he was..."
+				if killedGuard
+					me "Killing him was impulsive, but I'll let it go."
+				else
+					me "I admire how you handled that."
+				pl "You seem to be well acquainted with wealth."
+				me "Wealth is my business. Help me out and I can add to yours. Would you like a taste?"
+			choice "My wealth is none of your business."
+				me "Oh, but that's where your wrong lad. Wealth is my business. Maybe you'd like a taste?"
+			ask
+			pl "What do you have in mind?"
+			me "A bit of an errand. Need extra hands."
+			goto getInstructions
+	getInstructions
+		talk brynjolf
+			if talkResumed
+				me "Glad to see you came to your senses."
+			choice "What do I have to do?"
+				me "Simple... I'm going to cause... Steal Madesi's ring and plant it on Brand-Shei."
+			choice "No, nevermind."
+				me "You're trying my patience."
+				exit
+			ask
+			choice "Why plant the ring on Brand-Shei?"
+				me "There's someone that want to see him put out of business permanently. That's all you need to know."
+				if scamTime
+					me "Now, you tell me when you're ready and we'll get started."
+				else
+					me "I'll be out in the market all day. Meet me then if you've still got the stomach for it."
+			choice "Break the law? Are you kidding?"
+				me "Sorry... I usually have a nose for this kind of thing. Never mind then, lad. If you change your mind, come find me."
+				exit 0
+			ask
+			exit getStarted

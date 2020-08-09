@@ -1,0 +1,514 @@
+<html>
+<head>
+
+<script src="utilModule.js" charset="utf-8"></script>
+<script src="utilDebug.js" charset="utf-8"></script>
+<script src="utilities.js" charset="utf-8"></script>
+<script src="ajax.js" charset="utf-8"></script>
+	
+<script>
+
+let Script = {};
+
+let entityList = [];
+
+class Entity {
+	constructor(id) {
+		this.id = id;
+		entityList.push(this);
+	}
+	remove() {
+		this.dead = true;
+	}
+	tick() {
+	}
+}
+
+Entity.find = entityId=>{
+	return entityList.find(entity=>entity.id==entityId);
+}
+
+class Timer extends Entity {
+	constructor(duration,fn) {
+		super(Math.random());
+		this.duration = duration;
+		this.fn = fn;
+	}
+	tick(dt) {
+		if( this.duration <= 0 ) {
+			this.fn();
+			this.remove();
+		}
+		this.duration -= 1;
+	}
+}
+
+class Person extends Entity {
+	constructor(id) {
+		super(id);
+		this.siteId = '';
+	}
+	isAt(siteId) {
+		return this.siteId;
+	}
+	travelTo(siteId) {
+		new Timer(3,c=>this.siteId=siteId);
+	}
+}
+
+
+Script.CastProxy = class {
+	constructor(script) {
+		this.script = script;
+	}
+	find(castId) {
+		let entityId = this.script.cast[castId];
+		if( !entityId ) return null;
+		return entityList.find(entity=>entity.id==entityId);
+	}
+	getMember(obj,castId) {
+		debugger;
+		return this.find(castId);
+	}
+}
+
+class Dialog {
+	constructor() {
+		this.meSpoke = false;
+		this.replyList = [];
+		this.awaitReply = false;
+	}
+	me(s) {
+		console.log('ME:',s);
+		this.meSpoke = true;
+	}
+	addReply(s) {
+		console.log('PL?',s);
+		this.replyList.push('PL: '+s);
+	}
+	pl(s) {
+		// Pause this particular script, but allow other 
+	}
+	ask() {
+		this.awaitReply = true;
+	}
+	choose(n) {
+		console.log('PL:',this.replyList[n]);
+		this.replyList = [];
+		this.meSpoke = false;
+		this.awaitReply = false;
+	}
+}
+
+
+Script.Context = class {
+	constructor(vm) {
+		this.vm = vm;
+		this.castProxy = new Script.CastProxy(vm.script);
+		this.cast = new Proxy( vm.script.cast, {
+			get: this.castProxy.getMember.bind(this.castProxy)
+		});
+		this.state = 'BEGIN';
+		this.flow  = null;
+	}
+	get observer() {
+		return this.vm.observer;
+	}
+	get script() {
+		return this.vm.script;
+	}
+	get dialog() {
+		return this.observer.dialog;
+	}
+	me(s) {
+		if( this.dialog.meSpoke ) {
+			this.flow = '$awaitTalk';
+			return;
+		}
+		console.log(s);
+	}
+	choice(s) {
+		return;
+	}
+}
+
+
+Script.VM = class {
+	constructor() {
+		this.observer = null;
+		this.script  = null;
+		this.context = null;
+	}
+	setObserver(observer) {
+		this.observer = observer;
+	}
+	start( script, stateId ) {
+		this.script = script;
+		this.context = new Script.Context(this);
+		this.a  = [];
+		this.ip = 0;
+		this.depth = 0;
+		this.stack = [];
+	}
+	codeEntry(codeEntryId) {
+		debugger;
+		let fnString = this.script.code[codeEntryId];
+		let fn = Function( 'return ['+fnString+']' );
+		this.a = fn(this.a);
+	}
+	executeOne() {
+		let depth  = this.a[this.ip];
+		let line   = this.a[this.ip+1];
+		if( depth > this.depth ) return '$skip';
+		let result = line(this.context);
+		console.log(depth,':',result);
+		if( result ) {
+			depth += 1;
+		}
+		return $result;
+	}
+
+	execute() {
+		let run = true;
+		while( run ) {
+			debugger;
+			let result = this.executeOne();
+			if( result == '$await' ) {
+				return;
+			}
+			this.ip += 2;
+			if( result == '$skip' ) {
+				continue;
+			}
+			if( result == '$exit' ) {
+				break;
+			}
+			if( this.ip > this.a.length ) {
+				break;
+			}
+		}
+	}
+
+	tick() {
+		this.execute();
+	}
+}
+
+Script.Data = {};
+
+
+class SymbolValidator {
+	constructor() {
+	}
+	validate(symbol) {
+		// find a matching entity if
+	}
+}
+
+Script.Language = new function() {
+	this.cmdHash = {
+		priority: {
+			cmdFn: 'cmdPriority',
+			allow: ['DEF','CMD'],
+			commandKeys: {
+				priority:	['tPriority']
+			}
+		},
+		tick: {},
+		talk: {},
+		onEscape: {
+			cmdFn: 'cmdOnEscape',
+			allow: ['CMD'],
+			commandKeys: {
+				onEscape: 'sCommandBlock',
+			},
+		},
+		journal: {
+			cmdFn: 'cmdJournal',
+			allow: ['STATE','CMD'],
+			commandKeys: {
+				journal:	['tJournalId'],
+				done: 		['tJournalStage','tUndefined'],
+				start:		['tJournalStage','tUndefined'],
+				mark:		['tCastId','tUndefined'],
+				complete:	['tBoolean','tUndefined'],
+				fail:		['tBoolean','tUndefined'],
+			},
+		},
+		pl: {
+			cmdFn: 'cmdPl',
+			allow: ['CMD'],
+			commandKeys: {
+				pl:			['tDialog'],
+				do:			'sCommandBlock'
+			},
+		},
+		me: {
+			cmdFn: 'cmdMe',
+			allow: ['CMD','PICK'],
+			commandKeys: {
+				me:			['tDialog'],
+			},
+		},
+		say: {
+			cmdFn: 'cmdMe',
+			allow: ['CMD','PICK'],
+			commandKeys: {
+				say:		['tCastId'],
+				text:		['tDialog'],
+			},
+		},
+		if: {
+			cmdFn: 'cmdIf',
+			allow: ['STATE','CMD'],
+			commandKeys: {
+				if: 'sConditional',
+				do: 'sCommandBlock',
+				else: 'sCommandBlock',
+			},
+		},
+		choice: {
+			cmdFn: 'cmdChoice',
+			allow: ['CMD'],
+			commandKeys: {
+				choice:		['tDialog'],
+				do:			'sCommandBlock',
+			},
+		},
+		ask: {
+			cmdFn: 'cmdAsk',
+			allow: ['CMD'],
+			commandKeys: {
+				ask:		['tTrue'],
+			},
+		},
+		pick: {
+			cmdFn: 'cmdPick',
+			allow: ['CMD','PICK'],
+			commandKeys: {
+				pick:		['tPickArray'],
+			},
+		},
+		wait: {
+			cmdFn: 'cmdWait',
+			allow: ['CMD'],
+			commandKeys: {
+				await: 'sConditional',
+			},
+		},
+		goto: {
+			cmdFn: 'cmdGoto',
+			allow: ['CMD'],
+			commandKeys: {
+				goto: 'sQuestStateTarget',
+			},
+		},
+		exit: {
+			cmdFn: 'cmdExit',
+			allow: ['CMD'],
+			commandKeys: {
+				exit: 'sQuestStateTarget',
+			},
+		},
+		deadend: {
+			cmdFn: 'cmdDeadend',
+			allow: ['CMD'],
+			commandKeys: {
+				deadend: ['tNumber']
+			}
+		},
+		run: {
+			cmdFn: 'cmdRun',
+			allow: ['CMD'],
+			commandKeys: {
+				run: 'tDeclareId',
+			},
+		},
+	};
+}();
+
+Script.Parser = class {
+	constructor() {
+		this.sectionReg = /(\t*)(generator|cast|flag|code)(\s*)/;
+		this.castReg = /(\t*)(\w+)\s*(?::)\s*(.+)(\/\/.*)*/;
+		this.flagReg = this.castReg;
+		this.symbolReg = /(?:".*")|(?:'.*')|([a-zA-Z]\w+)((\.[a-zA-Z]\w+)*)/g;
+		this.codeReg = /(\t*)([a-zA-Z]\w+)([\s+]*)(.*)/;
+		this.declareReg = /(\t*)([a-zA-Z]\w+)(.*)/;
+		this.reset();
+	}
+	reset() {
+		this.output = {
+			id: null,
+			generator: [],
+			cast: {},
+			flag: {},
+			code: {}
+		}
+		this.codeContext = {
+			depth: null,
+			functionId: null
+		};
+		this.symCheck = [];
+		this.depth = null;
+		this.lineList = null;
+		this.lineNum = 0;
+		this.error = null;
+		this.issueList = [];
+	}
+	assert(value,text) {
+		if( !value ) {
+			let err = text+' in line '+this.lineNum+'\n'+this.lineList[this.lineNum];
+			this.report(err);
+			this.issueList.push(err);
+			return false;
+		}
+		return true;
+	}
+	test(value,text) {
+		if( !value ) {
+			console.assert(text);
+			this.error = this.error || text;
+			return false;
+		}
+		return true;
+	}
+	report(...args) {
+		console.log(...args);
+	}
+	getType(value) {
+		if( Array.isArray(value) ) return 'tArray';
+		if( Object.isObject(value) ) return 'tObject';
+		if( value === null ) return 'tNull';
+		return 't'+String.capitalize(typeof value);
+	}
+	prefixSymbols(line) {
+		let doNotPrefix = { "null": 1 };
+		let anySymbols = false;
+		let result = line.replace( this.symbolReg, (data,symbol,afterDot) =>{
+			if( symbol === undefined ) {
+				return data;	// It is a string.
+			}
+			this.symCheck.push({
+				lineNum: this.lineNum,
+				symbol: symbol,
+				afterDot: afterDot
+			});
+			anySymbols = true;
+			return (doNotPrefix[symbol] ? '' : 'c.')+symbol+afterDot;
+		});
+		result = (anySymbols ? 'c=>' : '')+result;
+		return result;
+	}
+	parseGenerator(line) {
+		line = line.trim();
+		if( line==='' ) return;
+		this.output.generator.push( this.prefixSymbols(line) );
+	}
+	parseKeyValue(line,regex) {
+		let [data,depth,key,value,comment] = regex.exec(line) || [];
+		this.assert( data === line, 'Unparsed line' );
+
+		value = this.prefixSymbols(value);
+		this.assert( typeof key === 'string', 'Invalid key' );
+
+		return [depth,key,value];
+	}
+	parseCast(line) {
+		let [depth,castKey,castValue] = this.parseKeyValue(line,this.castReg);
+		this.output.cast[castKey] = castValue;
+		this.report( 'cast '+castKey+' = '+castValue );
+	}
+	parseFlag(line) {
+		let [depth,flagKey,flagValue] = this.parseKeyValue(line,this.flagReg);
+		this.output.flag[flagKey] = flagValue;
+		this.report( 'flag '+flagKey+' = '+flagValue );
+	}
+	parseCode(line) {
+		{
+			let [data,depth,functionId,more] = this.declareReg.exec(line) || [];
+			if( more.trim()==='' && depth.length === this.depth+1 ) {
+				this.assert( depth.length == this.depth+1, 'Declaring code at wrong depth' );
+				this.codeContext.depth = depth.length;
+				this.codeContext.functionId = functionId;
+				this.output.code[this.codeContext.functionId] = [];
+				return;
+			}
+		}
+
+		let [data,depth,cmd,white,rest] = this.codeReg.exec(line) || [];
+		rest = this.prefixSymbols(rest);
+		this.assert( depth.length > this.codeContext.depth, 'Illegal depth' );
+		let relDepth = depth.length - this.codeContext.depth - 1;
+		let result = "	".repeat(relDepth)+'c=>c.'+cmd+'('+(rest?' '+rest+' ':'')+');';
+
+		this.output.code[this.codeContext.functionId].push( result );
+		this.report( relDepth+', '+result );
+	}
+	parse(s) {
+		let sectionFn = {
+			Script: this.parseScript,
+			generator: this.parseGenerator.bind(this),
+			cast: this.parseCast.bind(this),
+			flag: this.parseFlag.bind(this),
+			code: this.parseCode.bind(this)
+		};
+
+		this.lineList = s.split('\n');
+		let modeFn = ()=>{};
+		this.lineNum = -1;
+		while( ++this.lineNum < this.lineList.length ) {
+			let line = this.lineList[this.lineNum];
+			if( line.trim()==='' ) continue;
+			let [data,depth,secName,more] = this.sectionReg.exec(line) || [];
+			if( more!==undefined && more.trim()==='' && secName ) {
+				modeFn = sectionFn[secName];
+				this.depth = depth.length;
+				continue;
+			}
+			modeFn(line);
+		}
+
+		console.log('SCRIPT RESULT');
+		console.log(JSON.stringify(this.output,null,"\t"));
+		debugger;
+	}
+}
+
+async function main() {
+	Module.realize();
+
+	console.log('START');
+	debugger;
+	let testScript = await Ajax.get('tavernKeeper.scry');
+
+	let p = new Script.Parser();
+	p.parse(testScript);
+	debugger;
+
+
+	new Person('delphine');
+	new Person('player');
+
+	let observer = Entity.find('player');
+
+	let vm = new Script.VM();
+	vm.setObserver(observer);
+	vm.start( Script.Data.aChanceArrangement );
+	vm.codeEntry( 'explain' );
+
+	setInterval( ()=>{
+		vm.tick();
+	},250);
+}
+
+</script>
+</head>
+<body>
+	<script>
+	document.addEventListener("DOMContentLoaded", () => {
+		main();
+	})
+</script>
+</body>
+</html>
